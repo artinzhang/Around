@@ -1,11 +1,13 @@
-
 package main
 
 import (
-	"fmt"
-	"net/http"
 	"encoding/json"
+	"fmt"
+	"github.com/pborman/uuid"
+	elastic "gopkg.in/olivere/elastic.v3"
 	"log"
+	"net/http"
+	"reflect"
 	"strconv"
 )
 
@@ -16,21 +18,65 @@ type Location struct {
 
 type Post struct {
 	// `json:"user"` is for the json parsing of this User field. Otherwise, by default it's 'User'.
-	User     string `json:"user"`
-	Message  string  `json:"message"`
+	User     string   `json:"user"`
+	Message  string   `json:"message"`
 	Location Location `json:"location"`
 }
 
+const (
+	INDEX    = "around"
+	TYPE     = "post"
+	DISTANCE = "200km"
+	// Needs to update
+	//PROJECT_ID = "around-xxx"
+	//BT_INSTANCE = "around-post"
+	// Needs to update this URL if you deploy it to cloud.
+	ES_URL = "http://35.235.65.85:9200"
+)
+
 func main() {
+	// Create a client
+	client, err := elastic.NewClient(elastic.SetURL(ES_URL), elastic.SetSniff(false))
+	if err != nil {
+		panic(err)
+		return
+	}
+
+	// Use the IndexExists service to check if a specified index exists.
+	exists, err := client.IndexExists(INDEX).Do() // Check if the index exists.
+	if err != nil {
+		panic(err)
+	}
+	if !exists {
+		// Create a new index.
+		mapping := `{
+                    "mappings":{
+                           "post":{
+                                  "properties":{
+                                         "location":{
+                                                "type":"geo_point"
+                                         }
+                                  }
+                           }
+                    }
+             }
+             `
+		// If not, create a new mapping. For other fields (user, message, etc.) no need to have
+		// mapping as they are default. For geo location (lat, lon), we need to tell ES that they
+		// are geo points instead of two float points such that ES will use Geo-indexing for them
+		// (K-D tree)
+		_, err := client.CreateIndex(INDEX).Body(mapping).Do() // Create this index
+		if err != nil {
+			// Handle error
+			panic(err)
+		}
+	}
+
 	fmt.Println("started-service")
 	http.HandleFunc("/post", handlerPost)
 	http.HandleFunc("/search", handlerSearch)
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
-
-const (
-	DISTANCE = "200km"
-)
 
 func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Received one request for search")
@@ -42,25 +88,65 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 		ran = val + "km"
 	}
 
-	fmt.Println("range is ", ran)
+	fmt.Printf("Search received: %f %f %s\n", lat, lon, ran)
 
-	// Return a fake post
-	p := &Post{
-		User:"1111",
-		Message:"一生必去的100个地方",
-		Location: Location{
-			Lat:lat,
-			Lon:lon,
-		},
+	// Create a client
+	client, err := elastic.NewClient(elastic.SetURL(ES_URL), elastic.SetSniff(false))
+	// It means we create a connection to ES. If there is err, return.
+
+	if err != nil {
+		panic(err)
+		return
 	}
 
-	js, err := json.Marshal(p)
+	// Define geo distance query as specified in
+	// https://www.elastic.co/guide/en/elasticsearch/reference/5.2/query-dsl-geo-distance-query.html
+	q := elastic.NewGeoDistanceQuery("location")
+	// Prepare a geo based query to find posts within a geo box.
+	q = q.Distance(ran).Lat(lat).Lon(lon)
+
+	// Some delay may range from seconds to minutes. So if you don't get enough results. Try it later.
+	searchResult, err := client.Search().
+		Index(INDEX).
+		Query(q).
+		Pretty(true).
+		Do()
+	// Get the results based on Index (similar to dataset) and query (q that we just prepared). Pretty means to format the output.
+	if err != nil {
+		// Handle error
+		panic(err)
+	}
+
+	// searchResult is of type SearchResult and returns hits, suggestions,
+	// and all kinds of other information from Elasticsearch.
+	fmt.Printf("Query took %d milliseconds\n", searchResult.TookInMillis)
+	// TotalHits is another convenience function that works even when something goes wrong.
+	fmt.Printf("Found a total of %d post\n", searchResult.TotalHits())
+
+	// Each is a convenience function that iterates over hits in a search result.
+	// It makes sure you don't need to check for nil values in the response.
+	// However, it ignores errors in serialization.
+	var typ Post
+	var ps []Post
+	for _, item := range searchResult.Each(reflect.TypeOf(typ)) { // instance of
+		// Iterate the result results and if they are type of Post (typ)
+		p := item.(Post) // p = (Post) item
+		// Cast an item to Post, equals to p = (Post) item in java
+		fmt.Printf("Post by %s: %s at lat %v and lon %v\n", p.User, p.Message, p.Location.Lat, p.Location.Lon)
+		// TODO(student homework): Perform filtering based on keywords such as web spam etc.
+		ps = append(ps, p)
+		// Add the p to an array, equals ps.add(p) in java
+	}
+	js, err := json.Marshal(ps)
+	// Convert the go object to a string
 	if err != nil {
 		panic(err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// Allow cross domain visit for javascript.
 	w.Write(js)
 }
 
@@ -73,7 +159,32 @@ func handlerPost(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 		return
 	}
-	fmt.Fprintf(w, "Post received: %s\n", p.Message)
+	id := uuid.New()
+	// Save to ES.
+	saveToES(&p, id)
 }
 
+// Save a post to ElasticSearch
+func saveToES(p *Post, id string) {
+	// Create a client
+	es_client, err := elastic.NewClient(elastic.SetURL(ES_URL), elastic.SetSniff(false))
+	if err != nil {
+		panic(err)
+		return
+	}
 
+	// Save it to index
+	_, err = es_client.Index().
+		Index(INDEX).
+		Type(TYPE).
+		Id(id).
+		BodyJson(p).
+		Refresh(true).
+		Do()
+	if err != nil {
+		panic(err)
+		return
+	}
+
+	fmt.Printf("Post is saved to Index: %s\n", p.Message)
+}
