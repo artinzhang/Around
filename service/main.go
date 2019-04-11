@@ -47,6 +47,8 @@ func main() {
 		panic(err)
 		return
 	}
+	if err != nil {
+	}
 
 	// Use the IndexExists service to check if a specified index exists.
 	exists, err := client.IndexExists(INDEX).Do() // Check if the index exists.
