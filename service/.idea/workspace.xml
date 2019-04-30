@@ -169,7 +169,7 @@
       <workItem from="1555781003621" duration="63000" />
       <workItem from="1555871080997" duration="3834000" />
       <workItem from="1556418588156" duration="539000" />
-      <workItem from="1556560276330" duration="553000" />
+      <workItem from="1556560276330" duration="980000" />
     </task>
     <task id="LOCAL-00001" summary="update geo-index func">
       <created>1554318721365</created>
@@ -255,11 +255,18 @@
       <option name="project" value="LOCAL" />
       <updated>1556127513808</updated>
     </task>
-    <option name="localTasksCounter" value="13" />
+    <task id="LOCAL-00013" summary="update BigQuery">
+      <created>1556594388317</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1556594388317</updated>
+    </task>
+    <option name="localTasksCounter" value="14" />
     <servers />
   </component>
   <component name="TimeTrackingManager">
-    <option name="totallyTimeSpent" value="22345000" />
+    <option name="totallyTimeSpent" value="22772000" />
   </component>
   <component name="ToolWindowManager">
     <frame x="49" y="23" width="1371" height="1027" extended-state="0" />
